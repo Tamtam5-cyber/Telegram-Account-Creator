@@ -205,10 +205,10 @@ def login_accounts():
     selected_number = phone_data[int(id)]
     print(f"The number you selected: [{selected_number}]\n")
     print(f"Attempting to login, please wait.")
-    client = TelegramClient(f"sessions/{selected_number}", c_api_id, c_ap_hash)
+    client = TelegramClient("sessions/"+selected_number, c_api_id, c_ap_hash)
     client.connect()
-    if not client.is_user_authorized():
-        client.send_code_request(selected_number)
+    if client.is_user_authorized():
+        input("Account created please request code to login and press enter (only when requesting code)")
         print("Waiting for code...")
         while True:
             try:
@@ -216,14 +216,10 @@ def login_accounts():
                 code = message[0].message.split(":")[1].split(".")[0]
                 print("Code received!!!!")
                 print(f"Kod:{code}")
-                client.sign_in(selected_number, code)
                 client.disconnect()
                 break
             except IndexError:
                 continue
-    else:
-        print("Account already logged in.")
-        client.disconnect()
 
 
 def check_ban():
