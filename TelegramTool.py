@@ -1,6 +1,12 @@
 from json.decoder import JSONDecodeError
 from typing import Counter
-
+try:
+    from cloudscraper import create_scraper  # type: ignore
+except ModuleNotFoundError:
+    input("Module 'cloudscraper' is not installed. Please install it using 'pip install cloudscraper' and try again.")
+    exit()
+from requests.exceptions import HTTPError
+import requests
 from telethon.client import messageparse
 
 
@@ -28,13 +34,12 @@ try:
     c_country = config.get('sim_api', 'country')
     c_operator = config.get('sim_api', 'operator')
     c_product = config.get('sim_api', 'product')
-    c_token = config.get('sim_api', '5sim_api_key')
+    c_token = config.get('sim_api', '5sim_api_key')  # Ensure this line is present
 
     # Telegram
     c_api_id = config.get('telegram', 'api_id')
     c_ap_hash = config.get('telegram', 'api_hash')
 
-    # CONFIG
 except NoSectionError as e:
     input(
         f'Error!!, in config file \
@@ -70,45 +75,95 @@ class AccountMaker:
         self.product = product
         self.api_id = api_id
         self.api_hash = api_hash
-        self.headers = {'Authorization': 'Bearer ' + token,'Accept': 'application/json',}
+        self.headers = {
+            'Authorization': 'Bearer ' + token,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
         self.base_url = 'https://5sim.net/v1/user'
+        self.proxies = {
+        "http": "http://proxytelepro123:dfwedxcdgzx@104.143.244.186:6134",
+        "https": "http://proxytelepro123:dfwedxcdgzx@104.143.244.186:6134"
+        }
 
+    def get_balance(self):
+        profile_method = "/profile"
+        for attempt in range(3):
+            try:
+                response = requests.get(self.base_url + profile_method, headers=self.headers)
+                response.raise_for_status()  # Raise HTTPError for bad responses
+                return response.json().get('balance')
+            except ConnectionError as e:
+                print(self.color.WARNING + f"Attempt {attempt + 1}: Connection error, retrying... {e}" + self.color.ENDC)
+            except HTTPError as e:
+                print(self.color.WARNING + f"Attempt {attempt + 1}: HTTP error, retrying... {e}" + self.color.ENDC)
+            except Exception as e:
+                print(self.color.WARNING + f"Attempt {attempt + 1}: Unexpected error, retrying... {e}" + self.color.ENDC)
+            sleep(2)
+        print(self.color.FAIL + "Error: Failed to get balance after 3 attempts" + self.color.ENDC)
+        return None
 
+    def buy_activation(self):
+        buy_method = '/buy/activation/{}/{}/{}'
+        for attempt in range(3):
+            response = get(self.base_url + buy_method.format(self.country, self.operator, self.product), headers=self.headers)
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    return data.get("phone"), data.get("id")
+                except JSONDecodeError:
+                    print(self.color.WARNING + f"Attempt {attempt + 1}: Invalid response, retrying..." + self.color.ENDC)
+            else:
+                print(self.color.WARNING + f"Attempt {attempt + 1}: API returned status code {response.status_code}, retrying..." + self.color.ENDC)
+            sleep(2)
+        print(self.color.FAIL + "Error: Failed to buy activation after 3 attempts" + self.color.ENDC)
+        return None, None
 
     def create_account(self):
-        profile_method = "/profile"
-        buy_method = '/buy/activation/{}/{}/{}'
-        balance = get(self.base_url + profile_method, headers=self.headers).json()['balance']  
-        res = get(self.base_url + buy_method.format(self.country, self.operator, self.product), headers=self.headers)
-        try:
-            self.counter = 60
-            print(self.color.OKGREEN + f"\nBalance : {balance}\n"+self.color.ENDC)
-            res = res.json()
-            phone = res.get("phone")
-            id = res.get("id")
-            print(self.color.OKCYAN + f"Numara: {phone} | Numara Kimliği: {id}\n" + self.color.ENDC)
+        print("Debug: Starting create_account method")
+        while True:
             try:
-                client = TelegramClient(
-                    f"sessions/{phone}", self.api_id, self.api_hash)
-                client.connect()
-                send_code = client.send_code_request(phone=phone)
-                return self.get_code(client, id, phone, send_code)
-            except rpcerrorlist.PhoneNumberBannedError:
-                self.cancel_order(phone=phone, id=id, ban=True)
-                return self.create_account()
-            except rpcerrorlist.FloodWaitError:
-                self.cancel_order(phone=phone, id=id, flood=True)
-                return self.create_account()
-            except rpcerrorlist.PhoneNumberInvalidError:
-                self.cancel_order(phone=phone, id=id, flood=True)
-                return self.create_account()
-        except KeyboardInterrupt:
-            print(self.color.FAIL+"\nÇıkılıyor...\n"+self.color.ENDC)
-            sleep(2)
-            return main()
-        except JSONDecodeError:
-            input(res.text)
-            return main()
+                balance = self.get_balance()
+                print(self.color.OKGREEN + f"\nBalance : {balance}\n" + self.color.ENDC)
+                phone, id = self.buy_activation()
+                if not phone or not id:
+                    print(self.color.FAIL + "Error: Failed to retrieve phone or ID" + self.color.ENDC)
+                    return  # Exit or retry
+                print(self.color.OKCYAN + f"Numara: {phone} | Numara Kimliği: {id}\n" + self.color.ENDC)
+                self.handle_telegram_client(phone, id)
+                break  # Exit loop on success
+            except Exception as e:
+                print(self.color.FAIL + f"Error during account creation: {e}" + self.color.ENDC)
+                sleep(10)  # Retry after delay
+
+    def buy_activation(self):
+        buy_method = '/buy/activation/{}/{}/{}'
+        for attempt in range(3):  # Retry up to 3 times
+            response = get(self.base_url + buy_method.format(self.country, self.operator, self.product), headers=self.headers, proxies=self.proxies)
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    return data.get("phone"), data.get("id")
+                except JSONDecodeError:
+                    print(self.color.WARNING + f"Attempt {attempt + 1}: Invalid response, retrying..." + self.color.ENDC)
+            else:
+                print(self.color.WARNING + f"Attempt {attempt + 1}: API returned status code {response.status_code}, retrying..." + self.color.ENDC)
+            sleep(2)  # Wait before retrying
+        print(self.color.FAIL + "Error: Failed to buy activation after 3 attempts" + self.color.ENDC)
+        return None, None
+
+    def handle_telegram_client(self, phone, id):
+        try:
+            client = TelegramClient(f"sessions/{phone}", self.api_id, self.api_hash)
+            client.connect()
+            send_code = client.send_code_request(phone=phone)
+            self.get_code(client, id, phone, send_code)
+        except rpcerrorlist.PhoneNumberBannedError:
+            self.cancel_order(phone=phone, id=id, ban=True)
+        except rpcerrorlist.FloodWaitError:
+            self.cancel_order(phone=phone, id=id, flood=True)
+        except rpcerrorlist.PhoneNumberInvalidError:
+            self.cancel_order(phone=phone, id=id)
 
     def get_code(self, client, id, phone, send_code):
         method = "/check/{}"
@@ -300,3 +355,23 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nÇıkılıyor...")
         exit()
+
+import requests
+import time
+
+def retry_with_backoff(attempts, delay):
+    for attempt in range(attempts):
+        try:
+            # Your API call logic here
+            break
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            time.sleep(delay * (2 ** attempt))  # Exponential backoff
+
+headers = {
+    'Authorization': 'Bearer <your_api_key>',
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+}
+response = requests.get('https://5sim.net/v1/user/profile', headers=headers)
+print(response.status_code, response.json())
